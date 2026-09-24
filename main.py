@@ -52,11 +52,12 @@ def get_rag_service(
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Index at startup: the vector retriever needs Ollama, so a failure here stops the app.
-    retriever = get_retriever()
+    overrides = app.dependency_overrides
+    retriever = overrides.get(get_retriever, get_retriever)()
     logger.info("Retriever ready: %s", type(retriever).__name__)
     # Warm up: the first call loads the model into memory, which can take ~50s.
     try:
-        get_llm().generate("Reply with OK.", "OK")
+        overrides.get(get_llm, get_llm)().generate("Reply with OK.", "OK")
         logger.info("LLM warmed up")
     except (LLMUnavailableError, LLMTimeoutError) as e:
         logger.warning("LLM warm-up failed, requests will return 503/504: %s", e)

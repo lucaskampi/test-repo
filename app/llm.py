@@ -74,3 +74,18 @@ class OllamaEmbedder:
         with _translate_ollama_errors(self._model):
             response = self._client.embed(model=self._model, input=texts)
         return [list(v) for v in response.embeddings]
+
+
+class FakeLLM:
+    """Deterministic LLM for tests: returns a fixed answer or raises a given error."""
+
+    def __init__(self, answer: str = "", error: Exception | None = None):
+        self.answer = answer
+        self.error = error
+        self.calls: list[tuple[str, str]] = []
+
+    def generate(self, system: str, user: str) -> str:
+        self.calls.append((system, user))
+        if self.error:
+            raise self.error
+        return self.answer
