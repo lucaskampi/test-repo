@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Protocol
 
 import httpx
@@ -16,6 +18,25 @@ class LLM(Protocol):
     def generate(self, system: str, user: str) -> str: ...
 
 
+class Embedder(Protocol):
+    def embed(self, texts: list[str]) -> list[list[float]]: ...
+
+
+@contextmanager
+def _translate_ollama_errors(model: str) -> Iterator[None]:
+    try:
+        yield
+    # ConnectTimeout means the server never answered, so it counts as unreachable.
+    except (ConnectionError, httpx.ConnectTimeout) as e:
+        raise LLMUnavailableError("Ollama is unreachable") from e
+    except httpx.TimeoutException as e:
+        raise LLMTimeoutError("Ollama call timed out") from e
+    except ollama.ResponseError as e:
+        if e.status_code == 404:
+            raise LLMUnavailableError(f"Model '{model}' is not available") from e
+        raise LLMUnavailableError(f"Ollama error: {e.error}") from e
+
+
 class OllamaLLM:
     def __init__(
         self,
@@ -27,7 +48,7 @@ class OllamaLLM:
         self._client = ollama.Client(host=host, timeout=timeout)
 
     def generate(self, system: str, user: str) -> str:
-        try:
+        with _translate_ollama_errors(self._model):
             response = self._client.chat(
                 model=self._model,
                 messages=[
@@ -36,13 +57,20 @@ class OllamaLLM:
                 ],
                 options={"temperature": 0},
             )
-        # ConnectTimeout means the server never answered, so it counts as unreachable.
-        except (ConnectionError, httpx.ConnectTimeout) as e:
-            raise LLMUnavailableError("Ollama is unreachable") from e
-        except httpx.TimeoutException as e:
-            raise LLMTimeoutError("Ollama call timed out") from e
-        except ollama.ResponseError as e:
-            if e.status_code == 404:
-                raise LLMUnavailableError(f"Model '{self._model}' is not available") from e
-            raise LLMUnavailableError(f"Ollama error: {e.error}") from e
         return response.message.content.strip()
+
+
+class OllamaEmbedder:
+    def __init__(
+        self,
+        model: str = "nomic-embed-text",
+        host: str = "http://localhost:11434",
+        timeout: float = 60.0,
+    ):
+        self._model = model
+        self._client = ollama.Client(host=host, timeout=timeout)
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        with _translate_ollama_errors(self._model):
+            response = self._client.embed(model=self._model, input=texts)
+        return [list(v) for v in response.embeddings]
