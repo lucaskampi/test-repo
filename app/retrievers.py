@@ -1,6 +1,7 @@
 from typing import Protocol
 
 import chromadb
+from chromadb.errors import NotFoundError
 
 from app.knowledge_base import KNOWLEDGE_BASE
 from app.llm import Embedder
@@ -38,7 +39,13 @@ class VectorRetriever:
         self._embedder = embedder
         self._top_k = top_k
         self._by_id = {s.id: s for s in snippets}
-        self._collection = chromadb.EphemeralClient().create_collection(
+        client = chromadb.EphemeralClient()
+        # Ephemeral clients share one in-process store, so drop any previous index first.
+        try:
+            client.delete_collection("knowledge_base")
+        except NotFoundError:
+            pass
+        self._collection = client.create_collection(
             name="knowledge_base",
             configuration={"hnsw": {"space": "cosine"}},
             embedding_function=None,
